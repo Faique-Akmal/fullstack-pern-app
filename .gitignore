@@ -1,0 +1,54 @@
+# ----------------------------------
+# 1. Dependencies (Sabse Important)
+# ----------------------------------
+node_modules/
+*/node_modules/
+package-lock.json
+yarn.lock
+
+# ----------------------------------
+# 2. Environment Variables (SECURITY RISK 🔴)
+# ----------------------------------
+# Ismein DB password aur API keys hoti hain, ise kabhi commit mat karna
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# ----------------------------------
+# 3. Build Outputs (Generated Files)
+# ----------------------------------
+# TypeScript compile hone ke baad 'dist' folder banta hai, wo upload nahi karte
+dist/
+build/
+out/
+.next/
+coverage/
+
+# ----------------------------------
+# 4. Logs & Debugging
+# ----------------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ----------------------------------
+# 5. IDE & System Files
+# ----------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ----------------------------------
+# 6. Prisma & Database
+# ----------------------------------
+# Agar local sqlite use kar rahe ho (testing ke liye)
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Note: 'prisma/migrations' ko ignore MAT karna, wo zaroori hai.

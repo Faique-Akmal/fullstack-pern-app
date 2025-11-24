@@ -1,0 +1,18 @@
+{
+  "name": "full-stack",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+  "server": "cd backend && npm run dev",
+  "mobile": "cd mobile && npx react-native start",
+  "android": "cd mobile && npx react-native run-android",
+  "ios": "cd mobile && npx react-native run-ios"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

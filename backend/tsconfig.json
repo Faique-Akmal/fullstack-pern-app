@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "module": "commonjs",
+    "rootDir": "../",  // ✅ Change to project root
+    "outDir": "./dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "baseUrl": "../",  // ✅ Add baseUrl
+    "paths": {
+      "@shared/*": ["shared/*"]  // ✅ Path mapping for shared files
+    }
+  },
+  "include": [
+    "src/**/*",
+    "../shared/**/*"  // ✅ Include shared files
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
