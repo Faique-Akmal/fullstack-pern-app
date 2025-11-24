@@ -1,21 +1,69 @@
-import express, { Request, Response } from 'express';
-import cors from 'cors';
-import pool from './db';
-import type { 
-  User, 
-  UserWithPassword, 
-  RegisterRequest, 
-  LoginRequest, 
-  AuthResponse 
-} from '../../shared/types/shared';
+import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
+import pool from "./db";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+
+import type {
+  User,
+  UserWithPassword,
+  RegisterRequest,
+  LoginRequest
+} from "../../shared/types/shared";
+
 const app = express();
 const port = process.env.PORT || 8000;
 
 app.use(cors());
 app.use(express.json());
 
-// Database Initialization
-app.get('/init-db', async (req: Request, res: Response) => {
+const JWT_SECRET = "YOUR_SECRET_KEY_CHANGE_THIS";
+
+// ---------------------- TOKEN BLACKLIST ----------------------
+const blacklistedTokens: Set<string> = new Set();
+
+// ---------------------- JWT TOKEN HELPERS ----------------------
+const generateAccessToken = (user: any) => {
+  return jwt.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET,
+    { expiresIn: "15m" }
+  );
+};
+
+const generateRefreshToken = (user: any) => {
+  return jwt.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+};
+
+// ---------------------- JWT Middleware ----------------------
+const authMiddleware = (req: any, res: Response, next: NextFunction) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader?.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ error: "Access denied, no token provided" });
+  }
+
+  if (blacklistedTokens.has(token)) {
+    return res.status(401).json({ error: "Token expired or logged out" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    req.token = token;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+};
+
+// ---------------------- INIT DB ----------------------
+app.get("/init-db", async (req: Request, res: Response) => {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -26,139 +74,175 @@ app.get('/init-db', async (req: Request, res: Response) => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    res.json({ message: 'Database tables created successfully!' });
+
+    res.json({ message: "Database initialized!" });
   } catch (err) {
-    console.error('Database initialization error:', err);
-    res.status(500).send('Database initialization failed');
+    res.status(500).send("Database initialization failed");
   }
 });
 
-// Register Route
-app.post('/api/register', async (req: Request<{}, {}, RegisterRequest>, res: Response<AuthResponse | { error: string }>) => {
+// ---------------------- REGISTER ----------------------
+app.post("/api/register", async (req: Request<{}, {}, RegisterRequest>, res: Response) => {
   try {
-    const { username, email, password }: RegisterRequest = req.body;
+    const { username, email, password } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Username, email and password are required' 
-      });
-    }
+    if (!username || !email || !password)
+      return res.status(400).json({ error: "All fields are required" });
 
-    // Check if user exists
     const userExists = await pool.query(
-      'SELECT * FROM users WHERE email = $1 OR username = $2',
+      "SELECT * FROM users WHERE email = $1 OR username = $2",
       [email, username]
     );
 
-    if (userExists.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'User already exists with this email or username' 
-      });
-    }
+    if (userExists.rows.length > 0)
+      return res.status(400).json({ error: "User already exists" });
 
-    // Create user
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const result = await pool.query(
-      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username, email, created_at',
-      [username, email, password]
+      "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username, email, created_at",
+      [username, email, hashedPassword]
     );
 
-    const newUser: User = result.rows[0];
-    
-    const response: AuthResponse = {
-      message: 'User registered successfully!',
-      user: newUser
-    };
-
-    res.status(201).json(response);
-
+    res.status(201).json({
+      message: "User registered successfully!",
+      user: result.rows[0]
+    });
   } catch (err) {
-    console.error('Registration error:', err);
-    res.status(500).json({ error: 'Server error during registration' });
+    res.status(500).json({ error: "Server error during registration" });
   }
 });
 
-// Login Route - FIXED VERSION
-app.post('/api/login', async (req: Request<{}, {}, LoginRequest>, res: Response<AuthResponse | { error: string }>) => {
+// ---------------------- LOGIN WITH ACCESS + REFRESH TOKENS ----------------------
+app.post("/api/login", async (req: Request<{}, {}, LoginRequest>, res: Response) => {
   try {
-    const { email, password }: LoginRequest = req.body;
+    const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ 
-        error: 'Email and password are required' 
-      });
-    }
-
-    // Use UserWithPassword type for database result
     const result = await pool.query<UserWithPassword>(
-      'SELECT * FROM users WHERE email = $1',
+      "SELECT * FROM users WHERE email = $1",
       [email]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(400).json({ 
-        error: 'Invalid email or password' 
-      });
-    }
+    if (result.rows.length === 0)
+      return res.status(400).json({ error: "Invalid email or password" });
 
-    const user: UserWithPassword = result.rows[0];
-    const isValidPassword = password === user.password;
+    const user = result.rows[0];
 
-    if (!isValidPassword) {
-      return res.status(400).json({ 
-        error: 'Invalid email or password' 
-      });
-    }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch)
+      return res.status(400).json({ error: "Invalid email or password" });
 
-    // Create response without password
-    const userResponse: User = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      created_at: user.created_at
-    };
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
 
-    const response: AuthResponse = {
-      message: 'Login successful!',
-      user: userResponse
-    };
-
-    res.json(response);
-
+    res.json({
+      message: "Login successful!",
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        created_at: user.created_at
+      }
+    });
   } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Server error during login' });
+    res.status(500).json({ error: "Server error during login" });
   }
 });
 
-// Get all users
-app.get('/api/users', async (req: Request, res: Response<User[] | { error: string }>) => {
+// ---------------------- REFRESH TOKEN ENDPOINT ----------------------
+app.post("/api/token/refresh", async (req: Request, res: Response) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: "Refresh token is required" });
+  }
+
   try {
-    const result = await pool.query<User>(
-      'SELECT id, username, email, created_at FROM users ORDER BY created_at DESC'
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+
+    const newAccessToken = jwt.sign(
+      { id: (decoded as any).id, email: (decoded as any).email },
+      JWT_SECRET,
+      { expiresIn: "15m" }
     );
-    const users: User[] = result.rows;
-    res.json(users);
+
+    res.json({
+      accessToken: newAccessToken
+    });
   } catch (err) {
-    console.error('Get users error:', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });
 
-// Existing routes
-app.get('/', (req: Request, res: Response) => {
-  res.send('Hello from PERN Stack Backend!');
+// ---------------------- PROTECTED LOGOUT ----------------------
+app.post("/api/logout", authMiddleware, (req: any, res: Response) => {
+  const token = req.token;
+
+  blacklistedTokens.add(token);
+
+  res.json({ message: "Logged out successfully! Token invalidated." });
 });
 
-app.get('/db-test', async (req: Request, res: Response) => {
+// ---------------------- PROTECTED PROFILE ----------------------
+app.get("/api/profile", authMiddleware, async (req: any, res: Response) => {
   try {
-    const result = await pool.query('SELECT NOW()');
+    const userId = req.user.id;
+
+    const result = await pool.query<User>(
+      "SELECT id, username, email, created_at FROM users WHERE id = $1",
+      [userId]
+    );
+
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    res.status(500).json({ error: "Server error" });
   }
 });
 
+// ---------------------- PROTECTED ALL USERS ----------------------
+app.get("/api/allusers", authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query<User>(
+      "SELECT id, username, email, created_at FROM users ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ---------------------- PROTECTED GET USER BY ID ----------------------
+app.get("/api/user/:id", authMiddleware, async (req: any, res: Response) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const result = await pool.query<User>(
+      "SELECT id, username, email, created_at FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ---------------------- TEST ----------------------
+app.get("/", (req: Request, res: Response) => {
+  res.send("Hello from JWT Protected PERN API!");
+});
+
+// ---------------------- SERVER ----------------------
 app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
